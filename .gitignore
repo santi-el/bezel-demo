@@ -1,0 +1,15 @@
+node_modules
+
+# macOS
+.DS_Store
+
+# Cursor
+.cursor/
+
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
