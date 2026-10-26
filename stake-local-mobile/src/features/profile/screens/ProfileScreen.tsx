@@ -112,10 +112,12 @@ const mockFeedPosts: FeedPost[] = [
 
 export default function ProfileScreen() {
   const navigation = useNavigation<NavigationProp>();
+  const [currentUserId,setCurrentUserId]=useState('dev_user_1');
   const [username, setUsername] = useState('betmaster99');
   const [score, setScore] = useState(1250);
   const [balance, setBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [posts, setPosts] = useState<FeedPost[]>(mockFeedPosts);
   const [following, setFollowing] = useState(42);
   const [followers, setFollowers] = useState(128);
@@ -131,6 +133,7 @@ export default function ProfileScreen() {
       setLoading(true);
       const userId = await authService.getUserId();
       if (userId) {
+        setCurrentUserId(userId);
         const user = await apiClient.getUserById(userId);
         if (user) {
           setUsername(user.username);
@@ -204,8 +207,8 @@ export default function ProfileScreen() {
           <Text style={styles.postText}>{item.text}</Text>
         )}
 
-        {item.image && (
-          <Image source={{ uri: item.image }} style={styles.postImage} />
+        {item.image && !failedImages[item.id] && (
+          <Image source={{ uri: item.image }} style={styles.postImage} onError={() => setFailedImages(prev => ({...prev, [item.id]: true}))} />
         )}
 
         {item.offerId && (
@@ -253,28 +256,40 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Profile Header */}
+      {/* Feed */}
+      <FlatList
+        ListFooterComponent={<TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Text style={styles.logoutButtonText}>Log Out</Text>
+      </TouchableOpacity>}
+        data={posts}
+        renderItem={renderPost}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.feedContent}
+        ListHeaderComponent={<>
       <View style={styles.profileHeader}>
+        <View style={{flexDirection: 'row', alignItems: 'center', gap: 16, width: '100%'}}>
         <View style={styles.avatarLarge}>
           <Text style={styles.avatarLargeText}>{username.charAt(0).toUpperCase()}</Text>
         </View>
+        <View style={{flex: 1}}>
         <Text style={styles.username}>{username}</Text>
         <Text style={styles.score}>Score: {score}</Text>
         {balance !== null && (
           <Text style={styles.balance}>Balance: ${balance.toFixed(2)}</Text>
         )}
 
+        </View></View>
         <View style={styles.statsRow}>
           <TouchableOpacity
             style={styles.statItem}
-            onPress={() => navigation.navigate('Following', { userId: 'dev_user_1' })}
+            onPress={() => navigation.navigate('Following', { userId: currentUserId })}
           >
             <Text style={styles.statValue}>{following}</Text>
             <Text style={styles.statLabel}>Following</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.statItem}
-            onPress={() => navigation.navigate('Followers', { userId: 'dev_user_1' })}
+            onPress={() => navigation.navigate('Followers', { userId: currentUserId })}
           >
             <Text style={styles.statValue}>{followers}</Text>
             <Text style={styles.statLabel}>Followers</Text>
@@ -297,23 +312,13 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Feed */}
-      <FlatList
-        data={posts}
-        renderItem={renderPost}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.feedContent}
-        ListHeaderComponent={
           <View style={styles.feedHeader}>
             <Text style={styles.feedTitle}>Feed</Text>
           </View>
-        }
+        </>}
       />
 
-      {/* Logout Button */}
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Text style={styles.logoutButtonText}>Log Out</Text>
-      </TouchableOpacity>
+
     </View>
   );
 }
@@ -331,23 +336,25 @@ const styles = StyleSheet.create({
   },
   profileHeader: {
     alignItems: 'center',
-    paddingVertical: 24,
+    paddingVertical: 16,
     paddingHorizontal: 16,
     backgroundColor: '#1a1a1a',
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a2a',
+    borderRadius: 12,
+    marginBottom: 20,
   },
   avatarLarge: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#FFD700',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
   },
   avatarLargeText: {
-    fontSize: 48,
+    fontSize: 28,
     fontWeight: '700',
     color: '#000000',
   },
@@ -372,8 +379,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     width: '100%',
-    marginBottom: 16,
-    paddingVertical: 16,
+    marginBottom: 12,
+    paddingVertical: 8,
   },
   statItem: {
     alignItems: 'center',

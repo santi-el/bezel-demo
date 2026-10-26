@@ -1,3 +1,4 @@
+import { requestKey } from '../../../services/demo/runtime';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -11,7 +12,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
+import { apiClient, opposingOfferQuote, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { Offer } from '../../../models/Offer';
 import { getOfferPerspective } from '../../../models/OfferUtils';
@@ -26,6 +27,7 @@ type RouteParams = {
 export default function BetAgainstScreen() {
   const route = useRoute();
   const navigation = useNavigation<NavigationProp>();
+  const operationKey = React.useRef(requestKey()).current;
   const { offerId } = route.params as RouteParams;
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,19 +72,15 @@ export default function BetAgainstScreen() {
 
   const getStakeValue = (): number => {
     if (!stakeAmount) return 0;
-    const amount = parseFloat(stakeAmount);
-    if (isNaN(amount) || amount <= 0) return 0;
+    const amount = Number(stakeAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
     return amount;
   };
 
   const calculatePrizeMoney = (stake: number): number => {
     if (!offer || stake === 0) return 0;
     
-    const stakeB = offer.stakeB || stake;
-    if (offer.oddsRatio === '1:1') {
-      return stake + stake;
-    }
-    return stake + stakeB;
+    try { return opposingOfferQuote(offer,stake).prize; } catch {return 0;}
   };
 
   const getMatchDetails = (stake: number) => {
@@ -126,25 +124,8 @@ export default function BetAgainstScreen() {
     try {
       setConfirming(true);
       
-      // Create new offer (opposite side, user's own stake)
-      const userId = await authService.getUserId() || 'dev_user_1';
-      await apiClient.createOffer({
-        creatorUserId: userId,
-        propositionText: offer.propositionText,
-        trueSituationText: offer.falseSituationText, // Opposite side
-        falseSituationText: offer.trueSituationText, // Opposite side
-        nullSituationText: offer.nullSituationText,
-        postTitle: offer.trueSituationText.substring(0, 50), // From TRUE situation
-        stakeCreator: stake,
-        stakeB: offer.stakeB || stake,
-        oddsRatio: offer.oddsRatio || '1:1',
-        stakeMatcherMax: stake,
-        remainingStakeMatcher: stake,
-        distanceMeters: offer.distanceMeters,
-        status: 'OPEN',
-        parentOfferId: offer.offerId,
-      });
-      
+      await apiClient.betAgainst(offer.offerId, stake, operationKey);
+
       Alert.alert('Success', 'Your bet against offer has been posted!', [
         { text: 'OK', onPress: () => navigation.navigate('MyBets') },
       ]);
@@ -160,6 +141,9 @@ export default function BetAgainstScreen() {
     }
   };
 
+  if (!loading && !offer) {
+    return <View style={styles.container}><Text style={styles.loadingText}>Offer unavailable</Text><TouchableOpacity onPress={()=>loadData()}><Text style={styles.loadingText}>Retry</Text></TouchableOpacity></View>;
+  }
   if (loading || !offer) {
     return (
       <View style={styles.container}>
@@ -174,7 +158,7 @@ export default function BetAgainstScreen() {
   const stake = getStakeValue();
   const { deposit, commission, total, chargedNow } = getMatchDetails(stake);
   const prizeMoney = calculatePrizeMoney(stake);
-  const oddsRatio = offer.oddsRatio || '1:1';
+  const oddsRatio = (offer.oddsRatio || '1:1').split(':').reverse().join(':');
   const perspective = getOfferPerspective(offer, currentUserId); // Public view for bet against
 
   return (
@@ -246,7 +230,7 @@ export default function BetAgainstScreen() {
           {/* Disclaimer */}
           <View style={styles.disclaimerBox}>
             <Text style={styles.disclaimerText}>
-              We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. Learn more….
+              We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. <Text accessibilityRole="link" onPress={() => navigation.navigate('FAQ', { topic: 'deposit' })} style={{textDecorationLine: 'underline'}}>Learn more…</Text>
             </Text>
           </View>
 

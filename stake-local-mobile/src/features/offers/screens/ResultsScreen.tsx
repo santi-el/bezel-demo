@@ -1,3 +1,4 @@
+import { useScreenRefresh } from '../../../services/demo/useScreenRefresh';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -38,9 +39,11 @@ export default function ResultsScreen() {
     }, [offerId])
   );
 
-  const loadData = async () => {
+  useScreenRefresh(silent => loadData(silent));
+
+  const loadData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const userId = await authService.getUserId();
       setCurrentUserId(userId);
       
@@ -67,11 +70,12 @@ export default function ResultsScreen() {
 
     try {
       setSubmitting(true);
-      await apiClient.confirmResult(offer.offerId, selectedOutcome, currentUserId);
+      const result = offer.status === 'DISPUTED' ? await apiClient.settleOffer(offer.offerId, selectedOutcome, currentUserId) : await apiClient.confirmResult(offer.offerId, selectedOutcome, currentUserId);
+      setOffer(result);
       
       Alert.alert(
         'Result Confirmed',
-        'Your result has been submitted. Waiting for your opponent to confirm.',
+        result.status === 'SETTLED' ? 'Offer settled. Your wallet has been updated.' : result.status === 'DISPUTED' ? 'Results disagree. Funds remain held pending local demo resolution.' : 'Your result has been submitted. Waiting for your opponent to confirm.',
         [
           {
             text: 'OK',
@@ -109,11 +113,13 @@ export default function ResultsScreen() {
 
   const perspective = getOfferPerspective(offer, currentUserId);
   const hasNullOption = !!offer.nullSituationText;
+  const ownResult = perspective.isOwner ? offer.creatorOutcome : offer.matcherOutcome;
+  const canSubmit = !!offer.participantUserIds?.includes(currentUserId || '') && (offer.status === 'DISPUTED' || (offer.status === 'MATCHED' && !ownResult));
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.header}>What Happened?</Text>
-      <Text style={styles.subheader}>Select the outcome that occurred:</Text>
+      <Text style={styles.subheader}>{offer.status === 'SETTLED' ? `Settled: ${offer.settledOutcome}. Funds have been released.` : offer.status === 'DISPUTED' ? 'Local demo resolution: select the final outcome to release held funds.' : ownResult ? `Your result: ${ownResult}. Waiting for your opponent to confirm.` : 'Select the outcome that occurred:'}</Text>
 
       {/* Offer Title */}
       <View style={styles.offerTitleBox}>
@@ -192,15 +198,15 @@ export default function ResultsScreen() {
       <TouchableOpacity
         style={[
           styles.confirmButton,
-          (!selectedOutcome || submitting) && styles.confirmButtonDisabled,
+          (!selectedOutcome || submitting || !canSubmit) && styles.confirmButtonDisabled,
         ]}
         onPress={handleConfirmResult}
-        disabled={!selectedOutcome || submitting}
+        disabled={!selectedOutcome || submitting || !canSubmit}
       >
         {submitting ? (
           <ActivityIndicator size="small" color="#000000" />
         ) : (
-          <Text style={styles.confirmButtonText}>Confirm Result</Text>
+          <Text style={styles.confirmButtonText}>{offer.status === 'DISPUTED' ? 'Resolve Local Demo Dispute' : 'Confirm Result'}</Text>
         )}
       </TouchableOpacity>
 

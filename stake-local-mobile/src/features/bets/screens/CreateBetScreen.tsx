@@ -8,7 +8,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { apiClient } from '../../../services/api/client';
+import { apiClient, calculateCommission, calculateGFD, calculateTotalHold } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { locationService } from '../../../services/location/locationService';
 
@@ -33,14 +33,12 @@ export default function CreateBetScreen() {
         return;
       }
 
-      const location = await locationService.getCurrentLocation();
-      // Mock distance calculation (in production, would calculate from bet location)
-      const distance = Math.floor(Math.random() * 2000) + 100;
+      const distance = 150; // Demo Central Plaza
 
-      const stakeAmount = parseFloat(amount);
-      const commission = stakeAmount * 0.05; // 5% commission
-      const goodFaithDeposit = stakeAmount;
-      const totalHold = stakeAmount + commission + goodFaithDeposit;
+      const stakeAmount = Number(amount);
+      const commission = calculateCommission(stakeAmount);
+      const goodFaithDeposit = calculateGFD(stakeAmount);
+      const totalHold = calculateTotalHold(stakeAmount);
 
       await apiClient.createBet({
         title: title.trim(),
@@ -49,7 +47,7 @@ export default function CreateBetScreen() {
         goodFaithDeposit,
         totalHold,
         commission,
-        odds: parseFloat(odds),
+        odds: Number(odds),
         distance,
         userId,
         status: 'active',

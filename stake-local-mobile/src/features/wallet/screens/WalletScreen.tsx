@@ -1,3 +1,5 @@
+import { useScreenRefresh } from '../../../services/demo/useScreenRefresh';
+import { amountPrompt } from '../../../components/AmountPrompt';
 import React, { useState } from 'react';
 import {
   View,
@@ -35,9 +37,11 @@ export default function WalletScreen() {
     }, [])
   );
 
-  const loadWalletData = async () => {
+  useScreenRefresh(silent => loadWalletData(silent));
+
+  const loadWalletData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [balance, hold, gfd, txs] = await Promise.all([
         apiClient.getAvailableBalance(),
         apiClient.getOnHoldBalance(),
@@ -58,7 +62,7 @@ export default function WalletScreen() {
   };
 
   const handleAddFunds = () => {
-    Alert.prompt(
+    amountPrompt(
       'Add Funds',
       'Enter amount to add:',
       [
@@ -67,7 +71,7 @@ export default function WalletScreen() {
           text: 'Add',
           onPress: async (value?: string) => {
             if (!value) return;
-            const amount = parseFloat(value);
+            const amount = Number(value);
             if (isNaN(amount) || amount <= 0) {
               Alert.alert('Error', 'Please enter a valid amount');
               return;
@@ -87,7 +91,7 @@ export default function WalletScreen() {
   };
 
   const handleWithdraw = () => {
-    Alert.prompt(
+    amountPrompt(
       'Withdraw Funds',
       'Enter amount to withdraw:',
       [
@@ -96,7 +100,7 @@ export default function WalletScreen() {
           text: 'Withdraw',
           onPress: async (value?: string) => {
             if (!value) return;
-            const amount = parseFloat(value);
+            const amount = Number(value);
             if (isNaN(amount) || amount <= 0) {
               Alert.alert('Error', 'Please enter a valid amount');
               return;
@@ -238,19 +242,19 @@ export default function WalletScreen() {
                 </View>
                 <View style={styles.breakdownRow}>
                   <Text style={styles.breakdownLabel}>Stake Amount:</Text>
-                  <Text style={styles.breakdownValue}>${selectedOffer.stakeCreator.toFixed(2)}</Text>
+                  <Text style={styles.breakdownValue}>${(selectedTransaction.stakeAmount ?? 0).toFixed(2)}</Text>
                 </View>
                 <View style={styles.breakdownRow}>
                   <Text style={styles.breakdownLabel}>Good-Faith Deposit:</Text>
-                  <Text style={styles.breakdownValue}>${selectedOffer.goodFaithDeposit.toFixed(2)}</Text>
+                  <Text style={styles.breakdownValue}>${(selectedTransaction.depositAmount ?? 0).toFixed(2)}</Text>
                 </View>
                 <View style={[styles.breakdownRow, styles.totalRow]}>
                   <Text style={styles.breakdownTotalLabel}>Total Hold:</Text>
-                  <Text style={styles.breakdownTotalValue}>${selectedOffer.totalHold.toFixed(2)}</Text>
+                  <Text style={styles.breakdownTotalValue}>${Math.abs(selectedTransaction.holdDelta ?? 0).toFixed(2)}</Text>
                 </View>
                 <View style={styles.breakdownRow}>
                   <Text style={styles.breakdownLabel}>Commission:</Text>
-                  <Text style={styles.breakdownValue}>${selectedOffer.commission.toFixed(2)}</Text>
+                  <Text style={styles.breakdownValue}>${(selectedTransaction.commissionAmount ?? 0).toFixed(2)}</Text>
                 </View>
                 <View style={styles.breakdownRow}>
                   <Text style={styles.breakdownLabel}>Date Created:</Text>
@@ -273,7 +277,7 @@ export default function WalletScreen() {
                   style={styles.viewOfferButton}
                   onPress={() => {
                     setShowBreakdownModal(false);
-                    if (selectedOffer.status === 'MATCHED') {
+                    if (['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(selectedOffer.status)) {
                       navigation.navigate('ActiveBet', { betId: selectedOffer.offerId, offerId: selectedOffer.offerId });
                     } else {
                       navigation.navigate('BetDetails', { betId: selectedOffer.offerId, offerId: selectedOffer.offerId });
@@ -307,25 +311,12 @@ export default function WalletScreen() {
 
   async function handleTransactionPress(tx: Transaction) {
     // For hold transactions, try to find the associated offer
-    if (tx.type === 'hold' || tx.type === 'offer' || tx.type === 'fee') {
+    if (tx.offerId) {
       setSelectedTransaction(tx);
       
       // Try to find offer from description or by looking at recent offers
       try {
-        const offers = await apiClient.getOffers();
-        // Find an offer that matches the transaction time
-        const txDate = new Date(tx.createdAt);
-        const matchingOffer = offers.find(o => {
-          const offerDate = new Date(o.createdAt);
-          // Within 5 seconds of each other
-          return Math.abs(offerDate.getTime() - txDate.getTime()) < 5000;
-        });
-        
-        if (matchingOffer) {
-          setSelectedOffer(matchingOffer);
-        } else {
-          setSelectedOffer(null);
-        }
+        setSelectedOffer(tx.offerId ? await apiClient.getOfferById(tx.offerId) : null);
       } catch (error) {
         setSelectedOffer(null);
       }

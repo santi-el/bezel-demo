@@ -1,15 +1,22 @@
-node_modules
-
-# macOS
-.DS_Store
-
-# Cursor
-.cursor/
-
-# Dependencies
+# Dependencies and generated output
 node_modules/
+dist/
+.expo/
+web-build/
+*.tsbuildinfo
 
-# Environment variables
+# Local files and source archives
+.DS_Store
+.cursor/
+backups/
+*.tar.gz
+*.log
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.p8
+*.jks
+*.mobileprovision

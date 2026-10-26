@@ -1,3 +1,4 @@
+import { useScreenRefresh } from '../../../services/demo/useScreenRefresh';
 import React, { useState } from 'react';
 import {
   View,
@@ -10,7 +11,7 @@ import {
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { apiClient } from '../../../services/api/client';
+import { apiClient, matchQuote } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { locationService } from '../../../services/location/locationService';
 import { Offer } from '../../../models/Offer';
@@ -26,6 +27,9 @@ export default function NearYouScreen() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [bets, setBets] = useState<Bet[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const refresh = async () => { setRefreshing(true); try { await loadOffers(true); } finally { setRefreshing(false); } };
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useFocusEffect(
@@ -34,9 +38,11 @@ export default function NearYouScreen() {
     }, [])
   );
 
-  const loadOffers = async () => {
+  useScreenRefresh(silent => loadOffers(silent));
+
+  const loadOffers = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const userId = await authService.getUserId();
       setCurrentUserId(userId);
       const [allOffers, allBets] = await Promise.all([
@@ -45,7 +51,7 @@ export default function NearYouScreen() {
       ]);
       
       // Filter only OPEN offers, include user's own offers
-      const openOffers = allOffers.filter(o => o.status === 'OPEN');
+      const openOffers = allOffers.filter(o => o.status === 'OPEN' && o.creatorUserId !== userId);
       
       // Sort: user's own offers first, then by distance
       const sortedOffers = [...openOffers].sort((a, b) => {
@@ -57,25 +63,19 @@ export default function NearYouScreen() {
       });
       const sortedBets = [...allBets].sort((a, b) => (a.distance || 0) - (b.distance || 0));
       
+      setError(null);
       setOffers(sortedOffers);
-      setBets(sortedBets);
+      setBets(sortedBets.filter(b => b.userId !== userId));
     } catch (error) {
-      console.error('Error loading offers:', error);
+      setError('Could not load offers. Tap to retry.');
     } finally {
       setLoading(false);
     }
   };
 
   const getCTALabel = (offer: Offer): string => {
-    const matchAmount = Math.min(offer.remainingStakeMatcher, offer.stakeCreator);
-    const oddsRatio = offer.oddsRatio || '1:1';
-    
-    if (oddsRatio === '1:1') {
-      return `Match $${matchAmount.toFixed(0)} 1:1`;
-    }
-    
-    const stakeB = offer.stakeB || matchAmount;
-    return `Match $${matchAmount.toFixed(0)} to win $${stakeB.toFixed(0)}`;
+    const quote = matchQuote(offer, offer.remainingStakeMatcher);
+    return `Match $${quote.matcherStake.toFixed(2)} • Profit $${quote.creatorStake.toFixed(2)}`;
   };
 
   const renderOfferItem = ({ item: offer }: { item: Offer }) => {
@@ -88,6 +88,7 @@ export default function NearYouScreen() {
         styles.offerCard,
         isOwnOffer && styles.ownOfferCard,
       ]}>
+        <Text style={{color: '#AAAAAA', marginBottom: 10}}>@{offer.creatorName || 'Local player'}{offer.isSample ? ' · Demo offer' : ''}</Text>
         {isOwnOffer && (
           <View style={styles.ownOfferBadge}>
             <Text style={styles.ownOfferBadgeText}>YOUR OFFER</Text>
@@ -98,11 +99,13 @@ export default function NearYouScreen() {
         >
           <View style={styles.offerHeader}>
             <Text style={[styles.offerPostTitle, isOwnOffer && styles.ownOfferTitle]}>
-              {perspective.viewerTitle}
+              {offer.isSample ? offer.postTitle : perspective.viewerTitle}
+              {offer.isSample && <Text style={{fontSize: 14, color: '#CCCCCC'}}>{'\n'}{perspective.viewerTitle}</Text>}
             </Text>
-            <Text style={styles.offerDistance}>{offer.distanceMeters} m</Text>
+            <Text style={styles.offerDistance}>{offer.distanceMeters} m · simulated</Text>
           </View>
         </TouchableOpacity>
+        <Text style={{color: '#CCCCCC', marginBottom: 12}}>Odds {offer.oddsRatio} · {offer.expiryDate ? `Expires ${new Date(offer.expiryDate).toLocaleString()}` : 'No limit'}</Text>
         {!isOwnOffer && (
           <TouchableOpacity
             style={styles.ctaButton}
@@ -157,6 +160,9 @@ export default function NearYouScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        refreshing={refreshing}
+        onRefresh={refresh}
+        ListHeaderComponent={<View style={{marginBottom: 16}}><TouchableOpacity accessibilityRole="button" onPress={() => navigation.navigate('MyOffers')} style={{alignSelf: 'flex-end', borderColor: '#FFD700', borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 12}}><Text style={{color: '#FFD700', fontWeight: '600'}}>My Offers</Text></TouchableOpacity><Text style={{color: '#FFFFFF', fontSize: 22, fontWeight: '700'}}>Around your neighborhood</Text><Text style={{color: '#AAAAAA', marginTop: 6}}>Local demo · {offers.length} open offers · Profit before commission</Text>{error && <TouchableOpacity onPress={refresh}><Text style={{color: '#FFD700', paddingVertical: 12}}>{error}</Text></TouchableOpacity>}</View>}
         data={combinedData}
         renderItem={({ item }) => 
           item.type === 'offer' 
@@ -168,10 +174,10 @@ export default function NearYouScreen() {
             ? (item.data as Offer).offerId 
             : (item.data as Bet).id || `bet_${index}`
         }
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, {paddingBottom: insets.bottom + 110}]}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No offers nearby</Text>
+            <Text style={styles.emptyText}>No offers from other people nearby. Your offers are in My Offers.</Text>
           </View>
         }
       />

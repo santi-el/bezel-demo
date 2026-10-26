@@ -1,5 +1,7 @@
+import { AppState } from 'react-native';
+import { engine } from '../../services/demo/runtime';
 import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, NavigatorScreenParams } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { ActivityIndicator, View, StyleSheet, TouchableOpacity, Text } from 'react-native';
@@ -33,8 +35,9 @@ import GoodFaithDepositBreakdownScreen from '../../features/wallet/screens/GoodF
 import ResultsScreen from '../../features/offers/screens/ResultsScreen';
 import SupportScreen from '../../features/profile/screens/SupportScreen';
 
+export type TabParamList = {NearYou:undefined;Notifications:undefined;Wallet:undefined;Profile:undefined};
 export type RootStackParamList = {
-  MainTabs: undefined;
+  MainTabs: NavigatorScreenParams<TabParamList> | undefined;
   Login: undefined;
   Register: undefined;
   BetDetails: { betId: string; offerId?: string };
@@ -48,7 +51,7 @@ export type RootStackParamList = {
   MyBets: undefined;
   MyOffers: undefined;
   Settings: undefined;
-  FAQ: undefined;
+  FAQ: { topic?: 'deposit' } | undefined;
   Contact: undefined;
   Followers: { userId: string };
   Following: { userId: string };
@@ -60,7 +63,7 @@ export type RootStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-const Tab = createBottomTabNavigator();
+const Tab = createBottomTabNavigator<TabParamList>();
 
 function MainTabs() {
   return (
@@ -125,6 +128,10 @@ export default function AppNavigator() {
 
   useEffect(() => {
     checkAuth();
+    const tick=()=>{void engine.snapshot().catch(()=>{});};
+    const timer=setInterval(()=>{if(AppState.currentState==='active')tick();},1000);
+    const listener=AppState.addEventListener('change',status=>{if(status==='active')tick();});
+    return()=>{clearInterval(timer);listener.remove();};
   }, []);
 
   const checkAuth = async () => {
@@ -230,17 +237,7 @@ export default function AppNavigator() {
         <Stack.Screen
           name="MyOffers"
           component={MyOffersScreen}
-          options={({ navigation }) => ({
-            title: 'My Offers',
-            headerLeft: () => (
-              <TouchableOpacity
-                onPress={() => navigation.navigate('MainTabs', { screen: 'Profile' })}
-                style={{ paddingHorizontal: 8 }}
-              >
-                <Text style={{ color: '#FFD700', fontSize: 16 }}>‹ Profile</Text>
-              </TouchableOpacity>
-            ),
-          })}
+          options={{ title: 'My Offers' }}
         />
         <Stack.Screen
           name="Settings"

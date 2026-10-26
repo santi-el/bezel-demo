@@ -1,3 +1,4 @@
+import { requestKey } from '../../../services/demo/runtime';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -11,7 +12,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
+import { apiClient, matchQuote, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { Offer } from '../../../models/Offer';
 import { getOfferPerspective } from '../../../models/OfferUtils';
@@ -26,6 +27,7 @@ type RouteParams = {
 export default function MatchOfferScreen() {
   const route = useRoute();
   const navigation = useNavigation<NavigationProp>();
+  const operationKey = React.useRef(requestKey()).current;
   const { offerId } = route.params as RouteParams;
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,18 +75,14 @@ export default function MatchOfferScreen() {
 
   const getMatchAmount = (): number => {
     if (!offer) return 0;
-    return Math.min(offer.remainingStakeMatcher, offer.stakeCreator);
+    return offer.remainingStakeMatcher;
   };
 
   const calculatePrizeMoney = (): number => {
     const stake = getMatchAmount();
     if (!offer || stake === 0) return 0;
     
-    const stakeB = offer.stakeB || stake;
-    if (offer.oddsRatio === '1:1') {
-      return stake + stake;
-    }
-    return stake + stakeB;
+    try { return matchQuote(offer, stake).prize; } catch { return 0; }
   };
 
   const getMatchDetails = () => {
@@ -102,52 +100,32 @@ export default function MatchOfferScreen() {
   const startCountdown = () => {
     setShowCountdown(true);
     setCountdown(20);
-    
-    // Start countdown animation
-    Animated.timing(countdownAnimation, {
-      toValue: 1,
-      duration: 20000,
-      useNativeDriver: false,
-    }).start();
-    
-    // Countdown timer
-    const interval = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          // After 20 seconds, simulate auto-accept and show success
-          handleCountdownComplete();
-          return 0;
+    countdownAnimation.setValue(0);
+    Animated.timing(countdownAnimation,{toValue:1,duration:20000,useNativeDriver:false}).start();
+  };
+  useEffect(()=>{
+    if(!showCountdown)return;
+    let alive=true;
+    const update=async()=>{
+      try {
+        const current=await apiClient.getOfferById(offerId);
+        if(!alive)return;
+        if(!current || current.status==='OPEN' || current.status==='CANCELLED' || current.status==='EXPIRED') {
+          setShowCountdown(false);setConfirming(false);
+          Alert.alert('Match Rejected','The match is no longer pending. Released funds are reflected in your wallet.');return;
         }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  const handleCountdownComplete = async () => {
-    // Simulate the creator auto-accepting (after 20 seconds, offer is considered accepted)
-    try {
-      if (offer) {
-        // Auto-accept after deadline - pass autoAccept flag to allow acceptance after deadline
-        await apiClient.acceptMatch(offer.offerId, true);
-      }
-      setMatchSuccess(true);
-      
-      // Navigate to Active Offer Details after showing success
-      setTimeout(() => {
-        navigation.navigate('ActiveBet', { betId: offerId, offerId: offerId });
-      }, 2000);
-    } catch (error: any) {
-      console.error('Error accepting match:', error);
-      setShowCountdown(false);
-      // Check if it was rejected or if there's another error
-      if (error.message?.includes('rejected') || error.message?.includes('not in pending')) {
-        Alert.alert('Match Rejected', 'The offer creator rejected your match. Your funds have been refunded.');
-      } else {
-        Alert.alert('Error', error.message || 'Failed to accept match. Please try again.');
-      }
-    }
-  };
+        setCountdown(Math.max(0,Math.ceil((Date.parse(current.acceptRejectDeadline||'')-Date.now())/1000)));
+        if(current.status!=='MATCHED_PENDING_ACCEPT')setMatchSuccess(true);
+      } catch(error) {if(alive){setShowCountdown(false);setConfirming(false);Alert.alert('Error',error instanceof Error?error.message:'Unable to refresh match');}}
+    };
+    void update();const timer=setInterval(()=>void update(),1000);
+    return()=>{alive=false;clearInterval(timer);};
+  },[showCountdown,offerId]);
+  useEffect(()=>{
+    if(!matchSuccess)return;
+    const timer=setTimeout(()=>navigation.replace('ActiveBet',{betId:offerId,offerId}),1500);
+    return()=>clearTimeout(timer);
+  },[matchSuccess,offerId,navigation]);
 
   const handlePlace = async () => {
     if (!offer) return;
@@ -168,7 +146,7 @@ export default function MatchOfferScreen() {
 
     try {
       setConfirming(true);
-      await apiClient.matchOffer(offer.offerId, stake);
+      await apiClient.matchOffer(offer.offerId, stake, operationKey);
       
       // Start the 20-second countdown
       startCountdown();
@@ -212,7 +190,7 @@ export default function MatchOfferScreen() {
                   style={[
                     styles.countdownProgress,
                     {
-                      strokeDashoffset: progress,
+                      opacity: countdownAnimation.interpolate({inputRange:[0,1],outputRange:[1,0]}),
                     },
                   ]}
                 />
@@ -231,6 +209,9 @@ export default function MatchOfferScreen() {
     );
   }
 
+  if (!loading && !offer) {
+    return <View style={styles.container}><Text style={styles.loadingText}>Offer unavailable</Text><TouchableOpacity onPress={()=>loadData()}><Text style={styles.loadingText}>Retry</Text></TouchableOpacity></View>;
+  }
   if (loading || !offer) {
     return (
       <View style={styles.container}>
@@ -294,7 +275,7 @@ export default function MatchOfferScreen() {
       {/* Disclaimer */}
       <View style={styles.disclaimerBox}>
         <Text style={styles.disclaimerText}>
-          We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. Learn more….
+          We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. <Text accessibilityRole="link" onPress={() => navigation.navigate('FAQ', { topic: 'deposit' })} style={{textDecorationLine: 'underline'}}>Learn more…</Text>
         </Text>
       </View>
 

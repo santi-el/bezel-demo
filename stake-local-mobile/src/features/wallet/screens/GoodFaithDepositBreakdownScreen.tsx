@@ -35,12 +35,7 @@ export default function GoodFaithDepositBreakdownScreen() {
       const userId = await authService.getUserId();
       if (!userId) return;
 
-      const allOffers = await apiClient.getOffers();
-      // Include offers where user is creator OR matcher (both contribute GFD)
-      const userOffers = allOffers.filter(
-        o => (o.creatorUserId === userId || o.matcherUserId === userId) && 
-             (o.status === 'OPEN' || o.status === 'MATCHED' || o.status === 'MATCHED_PENDING_ACCEPT')
-      );
+      const userOffers = await apiClient.getReservationOffers();
 
       setOffers(userOffers);
 
@@ -65,7 +60,7 @@ export default function GoodFaithDepositBreakdownScreen() {
       <TouchableOpacity
         style={styles.offerItem}
         onPress={() => {
-          if (item.status === 'MATCHED' || item.status === 'MATCHED_PENDING_ACCEPT') {
+          if (['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(item.status)) {
             navigation.navigate('ActiveBet', { betId: item.offerId, offerId: item.offerId });
           } else {
             navigation.navigate('BetDetails', { betId: item.offerId, offerId: item.offerId });
@@ -74,10 +69,10 @@ export default function GoodFaithDepositBreakdownScreen() {
       >
         <View style={styles.offerHeader}>
           <Text style={styles.offerTitle}>{item.postTitle}</Text>
-          <Text style={styles.offerAmount}>${item.goodFaithDeposit.toFixed(2)}</Text>
+          <Text style={styles.offerAmount}>${(item.viewerDeposit ?? item.goodFaithDeposit).toFixed(2)}</Text>
         </View>
         <Text style={styles.offerDetails}>
-          Stake: ${item.stakeCreator.toFixed(2)} • {item.status}
+          Stake: ${(item.viewerStake ?? item.stakeCreator).toFixed(2)} • {item.status}
         </Text>
         <Text style={styles.offerDetails}>
           Will be refunded when offer is resolved
@@ -143,7 +138,7 @@ export default function GoodFaithDepositBreakdownScreen() {
             return (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>{section.title}</Text>
-                {section.data.map((offer: Offer) => (
+                {(section.data as Offer[]).map((offer: Offer) => (
                   <View key={offer.offerId}>
                     {renderOfferItem({ item: offer })}
                   </View>
@@ -157,7 +152,7 @@ export default function GoodFaithDepositBreakdownScreen() {
                 {section.data.length === 0 ? (
                   <Text style={styles.emptyText}>No refunds yet</Text>
                 ) : (
-                  section.data.map((tx: Transaction) => (
+                  (section.data as Transaction[]).map((tx: Transaction) => (
                     <View key={tx.id}>
                       {renderTransaction({ item: tx })}
                     </View>

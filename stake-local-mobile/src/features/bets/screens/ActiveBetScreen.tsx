@@ -1,3 +1,4 @@
+import { useScreenRefresh } from '../../../services/demo/useScreenRefresh';
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -58,9 +59,11 @@ export default function ActiveBetScreen() {
     }, [offerId, betId])
   );
 
-  const loadData = async () => {
+  useScreenRefresh(silent => loadData(silent));
+
+  const loadData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const userId = await authService.getUserId();
       setCurrentUserId(userId);
 
@@ -144,8 +147,8 @@ export default function ActiveBetScreen() {
 
   const isCreator = offer.creatorUserId === currentUserId;
   const perspective = getOfferPerspective(offer, currentUserId);
-  const userStake = isCreator ? offer.stakeCreator : offer.stakeCreator; // Same stake for both
-  const opponentStake = userStake;
+  const userStake = isCreator ? offer.stakeCreator : offer.remainingStakeMatcher;
+  const opponentStake = isCreator ? offer.remainingStakeMatcher : offer.stakeCreator;
   const prizeMoney = userStake + opponentStake;
 
   // Determine result status
@@ -154,6 +157,17 @@ export default function ActiveBetScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {offer.status === 'MATCHED_PENDING_ACCEPT' && (
+        <View style={styles.resultStatusSection}>
+          <Text style={styles.waitingText}>Waiting for creator · {Math.max(0,Math.ceil((Date.parse(offer.acceptRejectDeadline || '')-Date.now())/1000))} seconds remaining</Text>
+          {isCreator && <View style={styles.actionsRow}>
+            <TouchableOpacity style={styles.actionButton} onPress={()=>void apiClient.acceptMatch(offer.offerId).then(()=>loadData(true)).catch(e=>Alert.alert('Error',e.message))}><Text style={styles.actionButtonText}>Accept</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={()=>void apiClient.rejectMatch(offer.offerId).then(()=>navigation.replace('BetDetails',{betId:offer.offerId,offerId:offer.offerId})).catch(e=>Alert.alert('Error',e.message))}><Text style={styles.actionButtonText}>Reject</Text></TouchableOpacity>
+          </View>}
+        </View>
+      )}
+      {offer.status === 'DISPUTED' && <View style={styles.resultStatusSection}><Text style={styles.waitingText}>Results disagree. Stakes and deposits remain held. Open Resolve for local demo resolution.</Text></View>}
+      {['OPEN','CANCELLED','EXPIRED'].includes(offer.status) && <Text style={styles.waitingText}>Status: {offer.status}. This wager is not active.</Text>}
       {/* VS Split Screen */}
       <View style={styles.vsContainer}>
         {/* User Side */}
@@ -249,7 +263,7 @@ export default function ActiveBetScreen() {
 
       {/* Action Buttons */}
       <View style={styles.actionsRow}>
-        <TouchableOpacity style={styles.actionButton} onPress={handleRaise}>
+        <TouchableOpacity style={styles.actionButton} onPress={handleRaise} disabled={offer.status !== 'MATCHED' || !offer.participantUserIds?.includes(currentUserId || '')}>
           <Text style={styles.actionButtonText}>Raise</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.actionButton, styles.inviteButton]} onPress={handleInviteFriends}>
@@ -297,7 +311,7 @@ export default function ActiveBetScreen() {
       </View>
 
       {/* Resolve Button */}
-      <TouchableOpacity style={styles.resolveButton} onPress={handleResolve}>
+      <TouchableOpacity style={styles.resolveButton} onPress={handleResolve} disabled={!['MATCHED','DISPUTED','SETTLED'].includes(offer.status)}>
         <Text style={styles.resolveButtonText}>Resolve</Text>
       </TouchableOpacity>
     </ScrollView>

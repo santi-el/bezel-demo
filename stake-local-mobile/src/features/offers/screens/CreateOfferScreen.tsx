@@ -1,3 +1,4 @@
+import { requestKey } from '../../../services/demo/runtime';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -10,10 +11,12 @@ import {
   ActivityIndicator,
   Switch,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold, generatePostTitle } from '../../../services/api/client';
+import { apiClient, calculateOddsStake, calculateGFD, calculateCommission, calculateTotalHold, generatePostTitle } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { locationService } from '../../../services/location/locationService';
 import { Offer } from '../../../models/Offer';
@@ -56,11 +59,11 @@ const EXPIRY_OPTIONS: ExpiryOption[] = [
   { label: '2 days', value: 2880 },
   { label: '1 week', value: 10080 },
   { label: '1 month', value: 43200 },
-  { label: 'Forever', value: -1 },
+  { label: 'No limit', value: -1 },
 ];
 
 const getExpiryLabel = (minutes: number): string => {
-  if (minutes === -1) return 'Forever';
+  if (minutes === -1) return 'No limit';
   const option = EXPIRY_OPTIONS.find(o => o.value === minutes);
   if (option) return option.label;
   // Fallback for custom values
@@ -72,9 +75,17 @@ const getExpiryLabel = (minutes: number): string => {
 
 export default function CreateOfferScreen() {
   const navigation = useNavigation<NavigationProp>();
+  const operationKey = React.useRef(requestKey()).current;
   const [stakeA, setStakeA] = useState('');
   const [selectedOdds, setSelectedOdds] = useState<OddsOption | null>(ODDS_OPTIONS[0]); // Default to 1:1
   const [customStakeB, setCustomStakeB] = useState('');
+  const [customDraft, setCustomDraft] = useState('');
+  const [editingCustom, setEditingCustom] = useState(false);
+  const closeOdds = () => { setEditingCustom(false); setShowOddsDropdown(false); };
+  const applyCustom = () => {
+    if (!/^\d+(\.\d{1,2})?$/.test(customDraft.trim()) || Number(customDraft) <= 0) { Alert.alert('Invalid amount', 'Enter a positive amount with at most two decimals'); return; }
+    setCustomStakeB(customDraft.trim()); setSelectedOdds(ODDS_OPTIONS.find(o => o.ratio === 'CUSTOM')!); closeOdds();
+  };
   const [showOddsDropdown, setShowOddsDropdown] = useState(false);
   const [trueSituationText, setTrueSituationText] = useState('');
   const [falseSituationText, setFalseSituationText] = useState('');
@@ -84,7 +95,7 @@ export default function CreateOfferScreen() {
   const [generatingTitle, setGeneratingTitle] = useState(false);
   const [postTitle, setPostTitle] = useState('');
   const [availableBalance, setAvailableBalance] = useState<number | null>(null);
-  const [expiryMinutes, setExpiryMinutes] = useState(20); // Default 20 minutes
+  const [expiryMinutes, setExpiryMinutes] = useState(-1); // No expiry by default
   const [showExpiryPicker, setShowExpiryPicker] = useState(false);
 
   useFocusEffect(
@@ -94,13 +105,10 @@ export default function CreateOfferScreen() {
   );
 
   useEffect(() => {
-    loadBalance();
-  }, []);
-
-  useEffect(() => {
-    if (falseSituationText && !tieDisabled) {
-      generateTitle();
-    }
+    let current=true;
+    setGeneratingTitle(true);
+    generatePostTitle(falseSituationText,false).then(title=>{if(current)setPostTitle(title);}).finally(()=>{if(current)setGeneratingTitle(false);});
+    return ()=>{current=false;};
   }, [falseSituationText, tieDisabled]);
 
   const loadBalance = async () => {
@@ -112,33 +120,19 @@ export default function CreateOfferScreen() {
     }
   };
 
-  const generateTitle = async () => {
-    if (!falseSituationText) return;
-    
-    try {
-      setGeneratingTitle(true);
-      const title = await generatePostTitle(falseSituationText, false);
-      setPostTitle(title);
-    } catch (error) {
-      console.error('Error generating title:', error);
-    } finally {
-      setGeneratingTitle(false);
-    }
-  };
-
   const calculateStakeB = (): number => {
-    const stakeAValue = parseFloat(stakeA) || 0;
+    const stakeAValue = Number(stakeA) || 0;
     if (!selectedOdds || stakeAValue <= 0) return 0;
     
     if (selectedOdds.ratio === 'CUSTOM') {
-      return parseFloat(customStakeB) || 0;
+      return Number(customStakeB) || 0;
     }
     
-    return selectedOdds.calculateStakeB(stakeAValue);
+    try { return calculateOddsStake(stakeAValue, selectedOdds.ratio); } catch { return 0; }
   };
 
   const calculatePrizeMoney = (): number => {
-    const stakeAValue = parseFloat(stakeA) || 0;
+    const stakeAValue = Number(stakeA) || 0;
     const stakeBValue = calculateStakeB();
     
     if (selectedOdds?.ratio === '1:1') {
@@ -149,7 +143,7 @@ export default function CreateOfferScreen() {
   };
 
   const getCalculatedValues = () => {
-    const stakeAValue = parseFloat(stakeA) || 0;
+    const stakeAValue = Number(stakeA) || 0;
     const stakeBValue = calculateStakeB();
     const prizeMoney = calculatePrizeMoney();
     const gfd = stakeAValue > 0 ? calculateGFD(stakeAValue) : 0;
@@ -169,6 +163,8 @@ export default function CreateOfferScreen() {
   };
 
   const handleOddsSelect = (odds: OddsOption) => {
+    if (odds.ratio === 'CUSTOM') { setCustomDraft(customStakeB); setEditingCustom(true); return; }
+    setEditingCustom(false);
     setSelectedOdds(odds);
     setShowOddsDropdown(false);
     if (odds.ratio !== 'CUSTOM') {
@@ -177,12 +173,14 @@ export default function CreateOfferScreen() {
   };
 
   const handleCreateOffer = async () => {
-    const stakeAValue = parseFloat(stakeA);
+    const stakeAValue = Number(stakeA);
     
     if (!stakeA || stakeAValue <= 0) {
       Alert.alert('Error', 'Please enter a stake amount');
       return;
     }
+
+    if (!/^\d+(\.\d{1,2})?$/.test(stakeA.trim()) || (selectedOdds?.ratio === 'CUSTOM' && !/^\d+(\.\d{1,2})?$/.test(customStakeB.trim())) || calculateStakeB() <= 0) { Alert.alert('Error', 'Enter positive amounts with at most two decimals'); return; }
 
     if (!selectedOdds) {
       Alert.alert('Error', 'Please select odds');
@@ -235,8 +233,7 @@ export default function CreateOfferScreen() {
         return;
       }
 
-      const location = await locationService.getCurrentLocation();
-      const distance = Math.floor(Math.random() * 2000) + 100;
+      const distance = 150; // Demo Central Plaza
 
       // Calculate expiry date (current time + expiryMinutes), null for forever
       let expiryDateStr: string | undefined;
@@ -262,7 +259,7 @@ export default function CreateOfferScreen() {
         status: 'OPEN',
         parentOfferId: null,
         expiryDate: expiryDateStr,
-      });
+      }, operationKey);
 
       // Create notification
       // In production, would create in-app notification
@@ -311,7 +308,7 @@ export default function CreateOfferScreen() {
           disabled={!stakeAVal}
         >
           <Text style={styles.oddsButtonText}>
-            {selectedOdds ? selectedOdds.label : 'Select'}
+            {selectedOdds?.ratio === 'CUSTOM' ? `TO WIN $${Number(customStakeB).toFixed(2)}` : selectedOdds ? selectedOdds.label : 'Select'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -321,17 +318,18 @@ export default function CreateOfferScreen() {
         visible={showOddsDropdown}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setShowOddsDropdown(false)}
+        onRequestClose={closeOdds}
       >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{flex: 1}}>
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={() => setShowOddsDropdown(false)}
+          onPress={closeOdds}
         >
-          <View style={styles.dropdownContainer}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{maxHeight: '85%', width: '90%'}} contentContainerStyle={styles.dropdownContainer}>
             {ODDS_OPTIONS.map((odds) => {
               const stakeBForOption = odds.ratio === 'CUSTOM' 
-                ? parseFloat(customStakeB) || 0
+                ? Number(customStakeB) || 0
                 : odds.calculateStakeB(stakeAVal);
               const displayText = odds.ratio === 'CUSTOM'
                 ? 'CUSTOM'
@@ -347,21 +345,25 @@ export default function CreateOfferScreen() {
                 </TouchableOpacity>
               );
             })}
-            {selectedOdds?.ratio === 'CUSTOM' && (
+            {editingCustom && (
               <View style={styles.customInputContainer}>
                 <Text style={styles.customInputLabel}>To Win Amount:</Text>
                 <TextInput
                   style={styles.customInput}
-                  value={customStakeB}
-                  onChangeText={setCustomStakeB}
+                  autoFocus
+                  value={customDraft}
+                  onChangeText={setCustomDraft}
                   placeholder="0"
                   placeholderTextColor="#666666"
                   keyboardType="decimal-pad"
                 />
+                <TouchableOpacity onPress={applyCustom} style={styles.dropdownItem}><Text style={styles.dropdownItemText}>Apply amount</Text></TouchableOpacity>
+                <TouchableOpacity onPress={closeOdds} style={styles.dropdownItem}><Text style={styles.dropdownItemText}>Cancel</Text></TouchableOpacity>
               </View>
             )}
-          </View>
+          </ScrollView>
         </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Settlement Text Inputs */}
@@ -429,7 +431,7 @@ export default function CreateOfferScreen() {
         >
           <Text style={styles.expiryButtonText}>{getExpiryLabel(expiryMinutes)}</Text>
         </TouchableOpacity>
-        <Text style={styles.expiryHint}>Minimum: 20 minutes</Text>
+        <Text style={styles.expiryHint}>No limit, or choose a time (minimum 20 minutes)</Text>
       </View>
 
       {/* Expiry Picker Modal */}
@@ -491,7 +493,7 @@ export default function CreateOfferScreen() {
       {stakeAVal > 0 && (
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>
-            We'll hold ${holdAmount.toFixed(2)} and return your additional ${gfd.toFixed(2)} Good-Faith Deposit when the bet is resolved. That's how we guarantee that all everyone plays fair. Learn more...
+            We'll hold ${holdAmount.toFixed(2)} and return your additional ${gfd.toFixed(2)} Good-Faith Deposit when the bet is resolved. That's how we guarantee that all everyone plays fair. <Text accessibilityRole="link" onPress={() => navigation.navigate('FAQ', { topic: 'deposit' })} style={{textDecorationLine: 'underline'}}>Learn more…</Text>
           </Text>
         </View>
       )}

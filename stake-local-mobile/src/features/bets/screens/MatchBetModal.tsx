@@ -12,8 +12,10 @@ import {
   TextInput,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
+import { apiClient, matchQuote, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../../app/navigation/AppNavigator';
 import { Offer } from '../../../models/Offer';
 
 type RouteParams = {
@@ -25,7 +27,7 @@ type RouteParams = {
 
 export default function MatchBetModal() {
   const route = useRoute();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { offerId, betId, matchType = 'exact' } = route.params as RouteParams;
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,13 +78,13 @@ export default function MatchBetModal() {
     if (!offer) return 0;
     
     if (matchType === 'partial' && partialAmount) {
-      const amount = parseFloat(partialAmount);
+      const amount = Number(partialAmount);
       if (!isNaN(amount)) {
-        return Math.min(amount, offer.remainingStakeMatcher);
+        return amount;
       }
     }
     
-    return Math.min(offer.remainingStakeMatcher, offer.stakeCreator);
+    return offer.remainingStakeMatcher;
   };
 
   const getMatchDetails = () => {
@@ -100,11 +102,7 @@ export default function MatchBetModal() {
     const stake = getMatchAmount();
     if (!offer || stake === 0) return 0;
     
-    const stakeB = offer.stakeB || stake;
-    if (offer.oddsRatio === '1:1') {
-      return stake + stake;
-    }
-    return stake + stakeB;
+    try { return matchQuote(offer,stake).prize; } catch {return 0;}
   };
 
   const handleMatch = async () => {
@@ -148,7 +146,7 @@ export default function MatchBetModal() {
       return;
     }
     
-    const amount = parseFloat(partialAmount);
+    const amount = Number(partialAmount);
     if (isNaN(amount) || amount <= 0 || amount > offer.remainingStakeMatcher) {
       Alert.alert('Error', `Please enter an amount between $0.01 and $${offer.remainingStakeMatcher.toFixed(2)}`);
       return;
@@ -171,7 +169,7 @@ export default function MatchBetModal() {
   const handleMatchAndRaise = () => {
     if (!offer) return;
     setShowAmountInput(true);
-    setPartialAmount(Math.min(offer.remainingStakeMatcher, offer.stakeCreator).toString());
+    setPartialAmount(offer.remainingStakeMatcher.toString());
     setRaiseAmount('');
   };
 
@@ -181,8 +179,8 @@ export default function MatchBetModal() {
       return;
     }
     
-    const matchAmount = parseFloat(partialAmount) || Math.min(offer.remainingStakeMatcher, offer.stakeCreator);
-    const raiseAmt = parseFloat(raiseAmount);
+    const matchAmount = Number(partialAmount) || offer.remainingStakeMatcher;
+    const raiseAmt = Number(raiseAmount);
     
     if (isNaN(raiseAmt) || raiseAmt <= 0) {
       Alert.alert('Error', 'Please enter a valid raise amount');
@@ -192,30 +190,8 @@ export default function MatchBetModal() {
     try {
       setConfirming(true);
       
-      // First, match the offer (all or partial)
-      if (matchAmount > 0) {
-        await apiClient.matchOffer(offer.offerId, matchAmount);
-      }
-      
-      // Then create a new raised offer (opposite side)
-      const userId = await authService.getUserId() || 'dev_user_1';
-      await apiClient.createOffer({
-        creatorUserId: userId,
-        propositionText: offer.propositionText,
-        trueSituationText: offer.falseSituationText, // Opposite side
-        falseSituationText: offer.trueSituationText, // Opposite side
-        nullSituationText: offer.nullSituationText,
-        postTitle: offer.trueSituationText.substring(0, 50), // From TRUE situation
-        stakeCreator: raiseAmt,
-        stakeB: offer.stakeB || raiseAmt,
-        oddsRatio: offer.oddsRatio || '1:1',
-        stakeMatcherMax: raiseAmt,
-        remainingStakeMatcher: raiseAmt,
-        distanceMeters: offer.distanceMeters,
-        status: 'OPEN',
-        parentOfferId: offer.offerId,
-      });
-      
+      await apiClient.matchAndRaise(offer.offerId, matchAmount, raiseAmt, raiseAmt, '1:1');
+
       setShowAmountInput(false);
       navigation.goBack();
       Alert.alert('Success', 'Offer matched and raised!');
@@ -240,7 +216,7 @@ export default function MatchBetModal() {
       return;
     }
     
-    const stakeAmt = parseFloat(partialAmount);
+    const stakeAmt = Number(partialAmount);
     if (isNaN(stakeAmt) || stakeAmt <= 0) {
       Alert.alert('Error', 'Please enter a valid stake amount');
       return;
@@ -249,25 +225,8 @@ export default function MatchBetModal() {
     try {
       setConfirming(true);
       
-      // Create new offer (opposite side, user's own stake)
-      const userId = await authService.getUserId() || 'dev_user_1';
-      await apiClient.createOffer({
-        creatorUserId: userId,
-        propositionText: offer.propositionText,
-        trueSituationText: offer.falseSituationText, // Opposite side
-        falseSituationText: offer.trueSituationText, // Opposite side
-        nullSituationText: offer.nullSituationText,
-        postTitle: offer.trueSituationText.substring(0, 50), // From TRUE situation
-        stakeCreator: stakeAmt,
-        stakeB: offer.stakeB || stakeAmt,
-        oddsRatio: offer.oddsRatio || '1:1',
-        stakeMatcherMax: stakeAmt,
-        remainingStakeMatcher: stakeAmt,
-        distanceMeters: offer.distanceMeters,
-        status: 'OPEN',
-        parentOfferId: offer.offerId,
-      });
-      
+      await apiClient.betAgainst(offer.offerId, stakeAmt);
+
       setShowAmountInput(false);
       navigation.goBack();
       Alert.alert('Success', 'Your bet against offer has been posted!');
@@ -506,7 +465,7 @@ export default function MatchBetModal() {
               {/* Disclaimer */}
               <View style={styles.disclaimerBox}>
                 <Text style={styles.disclaimerText}>
-                  We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. Learn more….
+                  We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. <Text accessibilityRole="link" onPress={() => navigation.navigate('FAQ', { topic: 'deposit' })} style={{textDecorationLine: 'underline'}}>Learn more…</Text>
                 </Text>
               </View>
 

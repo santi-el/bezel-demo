@@ -1,3 +1,4 @@
+import { amountPrompt } from '../../../components/AmountPrompt';
 import React, { useState } from 'react';
 import {
   View,
@@ -10,13 +11,12 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
+import { apiClient, offerPreview } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { locationService } from '../../../services/location/locationService';
 import { Offer } from '../../../models/Offer';
 import { Bet } from '../../../models/Bet';
 import { User } from '../../../models/User';
-import { getOfferPerspective } from '../../../models/OfferUtils';
 import { RootStackParamList } from '../../../app/navigation/AppNavigator';
 
 type RouteParams = {
@@ -34,7 +34,7 @@ export default function BetDetailsScreen() {
   const [bet, setBet] = useState<Bet | null>(null);
   const [creator, setCreator] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isOwner, setIsOwner] = useState(false);
+  const [publicPreview, setPublicPreview] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const loadDetails = async () => {
@@ -53,11 +53,12 @@ export default function BetDetailsScreen() {
 
       // Try to load as Offer first
       const offerData = await apiClient.getOfferById(idToUse);
+      if (offerData && ['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(offerData.status)) { navigation.replace('ActiveBet',{betId:offerData.offerId,offerId:offerData.offerId}); }
       if (offerData) {
         setOffer(offerData);
         const creatorData = await apiClient.getUserById(offerData.creatorUserId);
         setCreator(creatorData);
-        setIsOwner(userId === offerData.creatorUserId);
+        setPublicPreview(false);
       } else {
         // Fallback to legacy Bet
         const betData = await apiClient.getBetById(idToUse);
@@ -80,20 +81,17 @@ export default function BetDetailsScreen() {
     }, [betId, offerId])
   );
 
-  const calculatePrizeMoney = (): number => {
-    if (!offer) return 0;
-    const stakeA = offer.stakeCreator;
-    const stakeB = offer.stakeB || stakeA;
-    
-    if (offer.oddsRatio === '1:1') {
-      return stakeA + stakeA;
-    }
-    return stakeA + stakeB;
+  const preview = offer ? offerPreview(offer, currentUserId, publicPreview) : null;
+  const isOwner = offer?.creatorUserId === currentUserId;
+  const guardSelfMatch = () => {
+    if (!isOwner) return false;
+    Alert.alert('Your offer', 'You cannot match your own offer.');
+    return true;
   };
 
   const getMatchStake = (): number => {
     if (offer) {
-      return Math.min(offer.remainingStakeMatcher, offer.stakeCreator);
+      return offer.remainingStakeMatcher;
     }
     if (bet) {
       return bet.stakeAmount || 0;
@@ -103,17 +101,19 @@ export default function BetDetailsScreen() {
 
   const getMatchCTALabel = (): string => {
     const matchStake = getMatchStake();
-    if (!offer) return `Match $${matchStake.toFixed(0)}`;
+    if (!offer) return `Match $${matchStake.toFixed(2)}`;
     
     if (offer.oddsRatio === '1:1') {
-      return `Match $${matchStake.toFixed(0)} 1:1`;
+      return `Match $${matchStake.toFixed(2)} 1:1`;
     }
     
-    const stakeB = offer.stakeB || matchStake;
-    return `Match $${matchStake.toFixed(0)} to win $${stakeB.toFixed(0)}`;
+    const stakeB = offer.stakeCreator;
+    return `Match $${matchStake.toFixed(2)} to win $${stakeB.toFixed(2)}`;
   };
 
   const handleMatch = () => {
+    if (guardSelfMatch()) return;
+    if(offer?.status !== 'OPEN') {Alert.alert('Offer unavailable', 'This offer is no longer open.');return;}
     const idToUse = offerId || betId;
     if (!idToUse) {
       Alert.alert('Error', 'Offer ID is missing');
@@ -123,6 +123,8 @@ export default function BetDetailsScreen() {
   };
 
   const handleMatchForLess = () => {
+    if (guardSelfMatch()) return;
+    if(offer?.status !== 'OPEN') {Alert.alert('Offer unavailable', 'This offer is no longer open.');return;}
     const idToUse = offerId || betId;
     if (!idToUse) {
       Alert.alert('Error', 'Offer ID is missing');
@@ -132,6 +134,8 @@ export default function BetDetailsScreen() {
   };
 
   const handleMatchAndRaise = () => {
+    if (guardSelfMatch()) return;
+    if(offer?.status !== 'OPEN') {Alert.alert('Offer unavailable', 'This offer is no longer open.');return;}
     const idToUse = offerId || betId;
     if (!idToUse) {
       Alert.alert('Error', 'Offer ID is missing');
@@ -141,6 +145,7 @@ export default function BetDetailsScreen() {
   };
 
   const handleBetAgainst = () => {
+    if(offer?.status !== 'OPEN') {Alert.alert('Offer unavailable', 'This offer is no longer open.');return;}
     const idToUse = offerId || betId;
     if (!idToUse) {
       Alert.alert('Error', 'Offer ID is missing');
@@ -150,7 +155,13 @@ export default function BetDetailsScreen() {
   };
 
   const handleRaise = () => {
-    Alert.alert('Coming soon', 'Raise feature is coming soon');
+    if(!offer)return;
+    if(offer.status !== 'OPEN'){navigation.navigate('ActiveBet',{betId:offer.offerId,offerId:offer.offerId});return;}
+    amountPrompt('Raise Amount',`Current stake: $${offer.stakeCreator.toFixed(2)}\nEnter new total stake amount:`,[
+      {text:'Cancel',style:'cancel'},
+      {text:'Raise',onPress:async value=>{try{await apiClient.raiseOfferAmount(offer.offerId,Number(value)); await loadDetails();}catch(e){Alert.alert('Error',e instanceof Error?e.message:'Unable to raise offer');}}}
+    ]);
+
   };
 
   if (loading) {
@@ -170,12 +181,12 @@ export default function BetDetailsScreen() {
   }
 
   // Owner view (creator viewing their own offer)
-  if (isOwner && offer) {
-    const perspective = getOfferPerspective(offer, currentUserId);
+  if (preview?.isOwner && offer) {
+    const perspective = preview!;
     const matchStake = getMatchStake();
-    const gfd = calculateGFD(matchStake);
-    const commission = calculateCommission(matchStake);
-    const holdAmount = calculateTotalHold(matchStake);
+    const gfd = offer.goodFaithDeposit;
+    const commission = offer.commission;
+    const holdAmount = offer.totalHold;
 
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -198,10 +209,10 @@ export default function BetDetailsScreen() {
 
         <View style={styles.descriptionSection}>
           <Text style={styles.descriptionText}>
-            You receive ${calculatePrizeMoney().toFixed(2)} if: {perspective.viewerWinText}
+            You receive ${perspective.receive.toFixed(2)} if: {perspective.viewerWinText}
           </Text>
           <Text style={styles.descriptionText}>
-            You lose ${offer.stakeCreator.toFixed(2)} if: {perspective.viewerLoseText}
+            You lose ${perspective.lose.toFixed(2)} if: {perspective.viewerLoseText}
           </Text>
           {perspective.viewerNullText && (
             <Text style={styles.descriptionText}>
@@ -233,7 +244,7 @@ export default function BetDetailsScreen() {
 
         <TouchableOpacity
           style={styles.viewAsPublicLink}
-          onPress={() => setIsOwner(false)}
+          onPress={() => setPublicPreview(true)}
         >
           <Text style={styles.viewAsPublicText}>View as public</Text>
         </TouchableOpacity>
@@ -243,9 +254,9 @@ export default function BetDetailsScreen() {
 
   // Public view (non-creator viewing offer)
   if (offer) {
-    const perspective = getOfferPerspective(offer, currentUserId);
+    const perspective = preview!;
     const matchStake = getMatchStake();
-    const prizeMoney = calculatePrizeMoney();
+    const prizeMoney = perspective.receive;
 
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -265,7 +276,7 @@ export default function BetDetailsScreen() {
             You receive ${prizeMoney.toFixed(2)} if: {perspective.viewerWinText}
           </Text>
           <Text style={styles.descriptionText}>
-            You lose ${matchStake.toFixed(2)} if: {perspective.viewerLoseText}
+            You lose ${perspective.lose.toFixed(2)} if: {perspective.viewerLoseText}
           </Text>
           {perspective.viewerNullText && (
             <Text style={styles.descriptionText}>
@@ -310,6 +321,11 @@ export default function BetDetailsScreen() {
             <Text style={styles.creatorActionButtonText}>Message Creator</Text>
           </TouchableOpacity>
         </View>
+        {isOwner && (
+          <TouchableOpacity style={styles.viewAsPublicLink} onPress={() => setPublicPreview(false)}>
+            <Text style={styles.viewAsPublicText}>Back to owner view</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     );
   }

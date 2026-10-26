@@ -1,3 +1,4 @@
+import { requestKey } from '../../../services/demo/runtime';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -9,10 +10,12 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
+import { apiClient, calculateOddsStake, matchQuote, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { Offer } from '../../../models/Offer';
 import { getOfferPerspective } from '../../../models/OfferUtils';
@@ -44,6 +47,7 @@ const ODDS_OPTIONS: OddsOption[] = [
 export default function MatchAndRaiseScreen() {
   const route = useRoute();
   const navigation = useNavigation<NavigationProp>();
+  const operationKey = React.useRef(requestKey()).current;
   const { offerId } = route.params as RouteParams;
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +55,13 @@ export default function MatchAndRaiseScreen() {
   const [raiseAmount, setRaiseAmount] = useState('');
   const [selectedOdds, setSelectedOdds] = useState<OddsOption | null>(ODDS_OPTIONS[0]); // Default to 1:1
   const [customStakeB, setCustomStakeB] = useState('');
+  const [customDraft, setCustomDraft] = useState('');
+  const [editingCustom, setEditingCustom] = useState(false);
+  const closeOdds = () => { setEditingCustom(false); setShowOddsDropdown(false); };
+  const applyCustom = () => {
+    if (!/^\d+(\.\d{1,2})?$/.test(customDraft.trim()) || Number(customDraft) <= 0) { Alert.alert('Invalid amount', 'Enter a positive amount with at most two decimals'); return; }
+    setCustomStakeB(customDraft.trim()); setSelectedOdds(ODDS_OPTIONS.find(o => o.ratio === 'CUSTOM')!); closeOdds();
+  };
   const [showOddsDropdown, setShowOddsDropdown] = useState(false);
   const [availableBalance, setAvailableBalance] = useState<number | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -72,7 +83,7 @@ export default function MatchAndRaiseScreen() {
       ]);
       
       if (offerData) {
-        setOffer(offerData);
+        setOffer(offerData && offerData.status === 'MATCHED' && offerData.creatorUserId === userId ? {...offerData,trueSituationText:offerData.falseSituationText,falseSituationText:offerData.trueSituationText} : offerData);
       } else {
         Alert.alert('Error', 'Offer not found', [
           { text: 'OK', onPress: () => navigation.goBack() },
@@ -91,13 +102,13 @@ export default function MatchAndRaiseScreen() {
 
   const getMatchAmount = (): number => {
     if (!offer) return 0;
-    return Math.min(offer.remainingStakeMatcher, offer.stakeCreator);
+    return offer.status === 'MATCHED' ? 0 : offer.remainingStakeMatcher;
   };
 
   const getRaiseAmountValue = (): number => {
     if (!raiseAmount) return 0;
-    const amount = parseFloat(raiseAmount);
-    if (isNaN(amount) || amount <= 0) return 0;
+    const amount = Number(raiseAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
     return amount;
   };
 
@@ -106,10 +117,10 @@ export default function MatchAndRaiseScreen() {
     if (!selectedOdds || raiseAmt <= 0) return 0;
     
     if (selectedOdds.ratio === 'CUSTOM') {
-      return parseFloat(customStakeB) || 0;
+      return Number(customStakeB) || 0;
     }
     
-    return selectedOdds.calculateStakeB(raiseAmt);
+    try { return calculateOddsStake(raiseAmt, selectedOdds.ratio); } catch { return 0; }
   };
 
   const calculatePrizeMoney = (stake: number, stakeB: number, oddsRatio: string): number => {
@@ -122,8 +133,7 @@ export default function MatchAndRaiseScreen() {
   const getMatchPrizeMoney = (): number => {
     const matchAmt = getMatchAmount();
     if (!offer || matchAmt === 0) return 0;
-    const stakeB = offer.stakeB || matchAmt;
-    return calculatePrizeMoney(matchAmt, stakeB, offer.oddsRatio || '1:1');
+    return matchQuote(offer, matchAmt).prize;
   };
 
   const getRaisePrizeMoney = (): number => {
@@ -174,32 +184,9 @@ export default function MatchAndRaiseScreen() {
     try {
       setConfirming(true);
       
-      // First, match the offer
-      if (matchAmt > 0) {
-        await apiClient.matchOffer(offer.offerId, matchAmt);
-      }
-      
-      // Then create a new raised offer (opposite side)
-      const userId = await authService.getUserId() || 'dev_user_1';
-      const stakeB = calculateStakeB();
-      await apiClient.createOffer({
-        creatorUserId: userId,
-        propositionText: offer.propositionText,
-        trueSituationText: offer.falseSituationText, // Opposite side
-        falseSituationText: offer.trueSituationText, // Opposite side
-        nullSituationText: offer.nullSituationText,
-        postTitle: offer.trueSituationText.substring(0, 50), // From TRUE situation
-        stakeCreator: raiseAmt,
-        stakeB,
-        oddsRatio: selectedOdds?.ratio || '1:1',
-        stakeMatcherMax: raiseAmt,
-        remainingStakeMatcher: raiseAmt,
-        distanceMeters: offer.distanceMeters,
-        status: 'OPEN',
-        parentOfferId: offer.offerId,
-      });
-      
-      Alert.alert('Success', 'Offer matched and raised!', [
+      await apiClient.matchAndRaise(offer.offerId, matchAmt, raiseAmt, calculateStakeB(), selectedOdds?.ratio || '1:1', operationKey, offer.status === 'MATCHED');
+
+      Alert.alert('Success', offer.status === 'MATCHED' ? 'Linked offer posted!' : 'Offer matched and raised!', [
         { text: 'OK', onPress: () => navigation.navigate('MyBets') },
       ]);
     } catch (error: any) {
@@ -214,6 +201,9 @@ export default function MatchAndRaiseScreen() {
     }
   };
 
+  if (!loading && !offer) {
+    return <View style={styles.container}><Text style={styles.loadingText}>Offer unavailable</Text><TouchableOpacity onPress={()=>loadData()}><Text style={styles.loadingText}>Retry</Text></TouchableOpacity></View>;
+  }
   if (loading || !offer) {
     return (
       <View style={styles.container}>
@@ -293,17 +283,18 @@ export default function MatchAndRaiseScreen() {
         visible={showOddsDropdown}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setShowOddsDropdown(false)}
+        onRequestClose={closeOdds}
       >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{flex: 1}}>
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={() => setShowOddsDropdown(false)}
+          onPress={closeOdds}
         >
-          <View style={styles.dropdownContainer}>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{maxHeight: '85%', width: '90%'}} contentContainerStyle={styles.dropdownContainer}>
             {ODDS_OPTIONS.map((odds) => {
               const stakeBForOption = odds.ratio === 'CUSTOM' 
-                ? parseFloat(customStakeB) || 0
+                ? Number(customStakeB) || 0
                 : odds.calculateStakeB(raiseAmt);
               const displayText = odds.ratio === 'CUSTOM'
                 ? 'CUSTOM'
@@ -314,6 +305,8 @@ export default function MatchAndRaiseScreen() {
                   key={odds.ratio}
                   style={styles.dropdownItem}
                   onPress={() => {
+                    if (odds.ratio === 'CUSTOM') { setCustomDraft(customStakeB); setEditingCustom(true); return; }
+                    setEditingCustom(false);
                     setSelectedOdds(odds);
                     setShowOddsDropdown(false);
                     if (odds.ratio !== 'CUSTOM') {
@@ -325,21 +318,25 @@ export default function MatchAndRaiseScreen() {
                 </TouchableOpacity>
               );
             })}
-            {selectedOdds?.ratio === 'CUSTOM' && (
+            {editingCustom && (
               <View style={styles.customInputContainer}>
                 <Text style={styles.customInputLabel}>To Win Amount:</Text>
                 <TextInput
                   style={styles.customInput}
-                  value={customStakeB}
-                  onChangeText={setCustomStakeB}
+                  autoFocus
+                  value={customDraft}
+                  onChangeText={setCustomDraft}
                   placeholder="0"
                   placeholderTextColor="#666666"
                   keyboardType="decimal-pad"
                 />
+                <TouchableOpacity onPress={applyCustom} style={styles.dropdownItem}><Text style={styles.dropdownItemText}>Apply amount</Text></TouchableOpacity>
+                <TouchableOpacity onPress={closeOdds} style={styles.dropdownItem}><Text style={styles.dropdownItemText}>Cancel</Text></TouchableOpacity>
               </View>
             )}
-          </View>
+          </ScrollView>
         </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Raise Details */}
@@ -412,7 +409,7 @@ export default function MatchAndRaiseScreen() {
       {/* Disclaimer - shows total hold (match + raise) */}
       <View style={styles.disclaimerBox}>
         <Text style={styles.disclaimerText}>
-          We'll hold ${(matchDetails.total + raiseDetails.total).toFixed(2)} and return your additional ${(matchDetails.deposit + raiseDetails.deposit).toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. Learn more….
+          We'll hold ${(matchDetails.total + raiseDetails.total).toFixed(2)} and return your additional ${(matchDetails.deposit + raiseDetails.deposit).toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. <Text accessibilityRole="link" onPress={() => navigation.navigate('FAQ', { topic: 'deposit' })} style={{textDecorationLine: 'underline'}}>Learn more…</Text>
         </Text>
       </View>
 

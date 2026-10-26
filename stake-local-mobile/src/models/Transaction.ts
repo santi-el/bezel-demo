@@ -11,6 +11,12 @@ export type TransactionStatus = 'pending' | 'completed' | 'failed';
 
 export interface Transaction {
   id: string;
+  userId?: string;
+  offerId?: string;
+  matchId?: string;
+  stakeAmount?: number;
+  depositAmount?: number;
+  commissionAmount?: number;
   amount: number;
   type: TransactionType;
   status: TransactionStatus;

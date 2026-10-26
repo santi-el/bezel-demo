@@ -1,9 +1,18 @@
-export type OfferStatus = 'OPEN' | 'MATCHED' | 'MATCHED_PENDING_ACCEPT' | 'SETTLED' | 'DISPUTED' | 'CANCELLED';
+export type OfferStatus = 'OPEN' | 'MATCHED' | 'MATCHED_PENDING_ACCEPT' | 'SETTLED' | 'DISPUTED' | 'CANCELLED' | 'EXPIRED';
 export type OfferOutcome = 'TRUE' | 'FALSE' | 'NULL';
 
 export interface Offer {
   offerId: string;
+  viewerStake?: number;
+  viewerDeposit?: number;
+  viewerHold?: number;
+  viewerCommission?: number;
+  participantUserIds?: string[];
+  ratioCreator?: number;
+  ratioMatcher?: number;
   creatorUserId: string;
+  creatorName?: string;
+  isSample?: boolean;
   propositionText: string;
   trueSituationText: string;
   falseSituationText: string;

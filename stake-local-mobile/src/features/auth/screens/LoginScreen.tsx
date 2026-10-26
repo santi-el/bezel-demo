@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import { apiClient } from '../../../services/api/client';
+import React, { useState, useEffect } from 'react';
 import {
   View,
+  ScrollView,
   Text,
   StyleSheet,
   TextInput,
@@ -18,41 +20,12 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 export default function LoginScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [accounts, setAccounts] = useState<{id:string;username:string}[]>([]);
+  useEffect(() => { apiClient.getUsers().then(setAccounts).catch(() => Alert.alert('Error', 'Unable to load local accounts')); }, []);
   const [loading, setLoading] = useState(false);
-
-  const handleLogin = async () => {
-    if (!username.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter both username and password');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const session = await authService.login(username, password);
-      
-      if (session) {
-        // Reset navigation stack to MainTabs
-        navigation.reset({
-          index: 0,
-          routes: [{ name: 'MainTabs' }],
-        });
-      } else {
-        Alert.alert('Error', 'Invalid credentials');
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      Alert.alert('Error', 'Failed to login. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // DEV ONLY: Development bypass for authentication
   const handleDevSignIn = async (userId: string = 'dev_user_1') => {
-    if (!__DEV__) {
-      return;
-    }
 
     try {
       setLoading(true);
@@ -73,43 +46,11 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, {flex: undefined, flexGrow: 1}]}>
         <Text style={styles.title}>Welcome Back</Text>
-        <Text style={styles.subtitle}>Sign in to continue</Text>
+        <Text style={styles.subtitle}>Choose a local demo account to continue</Text>
 
         <View style={styles.form}>
-          <Text style={styles.label}>Username</Text>
-          <TextInput
-            style={styles.input}
-            value={username}
-            onChangeText={setUsername}
-            placeholder="Enter your username"
-            placeholderTextColor="#666666"
-            autoCapitalize="none"
-          />
-
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Enter your password"
-            placeholderTextColor="#666666"
-            secureTextEntry
-          />
-
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#000000" />
-            ) : (
-              <Text style={styles.buttonText}>Sign In</Text>
-            )}
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.linkButton}
             onPress={() => navigation.navigate('Register')}
@@ -119,27 +60,15 @@ export default function LoginScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* DEV ONLY: Development authentication bypass */}
-          {__DEV__ && (
-            <View style={styles.devButtonsContainer}>
-              <TouchableOpacity
-                style={styles.devButton}
-                onPress={() => handleDevSignIn('dev_user_1')}
-                disabled={loading}
-              >
-                <Text style={styles.devButtonText}>Dev: Account 1 (betmaster99)</Text>
+          <View style={styles.devButtonsContainer}>
+            {accounts.map((account,index) => (
+              <TouchableOpacity key={account.id} style={[styles.devButton,index===1&&styles.devButtonSecondary]} onPress={()=>handleDevSignIn(account.id)} disabled={loading}>
+                <Text style={styles.devButtonText}>Account {index+1} ({account.username})</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.devButton, styles.devButtonSecondary]}
-                onPress={() => handleDevSignIn('dev_user_2')}
-                disabled={loading}
-              >
-                <Text style={styles.devButtonText}>Dev: Account 2 (BoxDaddy)</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+            ))}
+          </View>
         </View>
-      </View>
+      </ScrollView>
     </View>
   );
 }

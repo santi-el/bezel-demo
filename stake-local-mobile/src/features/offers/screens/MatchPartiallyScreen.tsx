@@ -1,3 +1,4 @@
+import { requestKey } from '../../../services/demo/runtime';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -11,7 +12,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { apiClient, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
+import { apiClient, matchQuote, calculateGFD, calculateCommission, calculateTotalHold } from '../../../services/api/client';
 import { authService } from '../../../services/auth/authService';
 import { Offer } from '../../../models/Offer';
 import { getOfferPerspective } from '../../../models/OfferUtils';
@@ -26,6 +27,7 @@ type RouteParams = {
 export default function MatchPartiallyScreen() {
   const route = useRoute();
   const navigation = useNavigation<NavigationProp>();
+  const operationKey = React.useRef(requestKey()).current;
   const { offerId } = route.params as RouteParams;
   const [offer, setOffer] = useState<Offer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,20 +72,16 @@ export default function MatchPartiallyScreen() {
 
   const getMatchAmount = (): number => {
     if (!amount || !offer) return 0;
-    const amountValue = parseFloat(amount);
-    if (isNaN(amountValue) || amountValue <= 0) return 0;
-    return Math.min(amountValue, offer.remainingStakeMatcher);
+    const amountValue = Number(amount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) return 0;
+    return amountValue;
   };
 
   const calculatePrizeMoney = (): number => {
     const stake = getMatchAmount();
     if (!offer || stake === 0) return 0;
     
-    const stakeB = offer.stakeB || stake;
-    if (offer.oddsRatio === '1:1') {
-      return stake + stake;
-    }
-    return stake + stakeB;
+    try { return matchQuote(offer, stake).prize; } catch { return 0; }
   };
 
   const getMatchDetails = () => {
@@ -127,7 +125,7 @@ export default function MatchPartiallyScreen() {
 
     try {
       setConfirming(true);
-      await apiClient.matchOffer(offer.offerId, matchAmount);
+      await apiClient.matchOffer(offer.offerId, matchAmount, operationKey);
       Alert.alert('Success', 'Offer matched partially!', [
         { text: 'OK', onPress: () => navigation.navigate('MyBets') },
       ]);
@@ -143,6 +141,9 @@ export default function MatchPartiallyScreen() {
     }
   };
 
+  if (!loading && !offer) {
+    return <View style={styles.container}><Text style={styles.loadingText}>Offer unavailable</Text><TouchableOpacity onPress={()=>loadData()}><Text style={styles.loadingText}>Retry</Text></TouchableOpacity></View>;
+  }
   if (loading || !offer) {
     return (
       <View style={styles.container}>
@@ -221,7 +222,7 @@ export default function MatchPartiallyScreen() {
           {/* Disclaimer */}
           <View style={styles.disclaimerBox}>
             <Text style={styles.disclaimerText}>
-              We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. Learn more….
+              We'll hold ${total.toFixed(2)} and return your additional ${deposit.toFixed(2)} Good-Faith Deposit when the offer is resolved. That's how we guarantee everyone plays fair. <Text accessibilityRole="link" onPress={() => navigation.navigate('FAQ', { topic: 'deposit' })} style={{textDecorationLine: 'underline'}}>Learn more…</Text>
             </Text>
           </View>
 

@@ -1,3 +1,4 @@
+import { apiClient } from '../../../services/api/client';
 import React, { useState } from 'react';
 import {
   View,
@@ -10,19 +11,23 @@ import {
 } from 'react-native';
 
 export default function ContactScreen() {
+  const submitting = React.useRef(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if(submitting.current)return;
     if (!name.trim() || !email.trim() || !subject.trim() || !message.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
-    // Mock submission
-    Alert.alert('Success', 'Your message has been sent. We\'ll get back to you soon!', [
+    submitting.current=true;
+    try {
+    const report=await apiClient.saveReport('contact', `${name} <${email}>\n${subject}\n${message}`);
+    Alert.alert('Success', `Your message has been saved on this device. Reference: ${report.id}. No message was sent.`, [
       {
         text: 'OK',
         onPress: () => {
@@ -33,13 +38,14 @@ export default function ContactScreen() {
         },
       },
     ]);
+    } catch(e) {Alert.alert('Error', e instanceof Error?e.message:'Unable to save message');} finally {submitting.current=false;}
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Contact Us</Text>
       <Text style={styles.subtitle}>
-        Have a question or need help? Send us a message and we'll respond as soon as possible.
+        Have a question or need help? Messages are saved locally in this demo.
       </Text>
 
       <View style={styles.form}>

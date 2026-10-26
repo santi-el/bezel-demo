@@ -1,3 +1,4 @@
+import { apiClient } from '../../../services/api/client';
 import React, { useState } from 'react';
 import {
   View,
@@ -39,12 +40,11 @@ export default function SupportScreen() {
     try {
       setSubmitting(true);
       
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const report = await apiClient.saveReport(selectedProblem, description, offerId);
       
       Alert.alert(
         'Report Submitted',
-        'Thank you for your report. Our team will review it and get back to you within 24 hours.',
+        `Thank you for your report. Saved on this device only. Reference: ${report.id}. No message was sent to a support team.`,
         [
           {
             text: 'OK',
@@ -64,7 +64,7 @@ export default function SupportScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.header}>Report a Problem</Text>
       <Text style={styles.subheader}>
-        Let us know what went wrong and we'll help resolve it.
+        Let us know what went wrong. Reports are saved locally in this demo.
       </Text>
 
       {offerId && (

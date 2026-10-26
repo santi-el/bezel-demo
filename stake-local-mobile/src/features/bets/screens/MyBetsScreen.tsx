@@ -1,3 +1,4 @@
+import { useScreenRefresh } from '../../../services/demo/useScreenRefresh';
 import React, { useState } from 'react';
 import {
   View,
@@ -29,9 +30,11 @@ export default function MyBetsScreen() {
     }, [])
   );
 
-  const loadMyBets = async () => {
+  useScreenRefresh(silent => loadMyBets(silent));
+
+  const loadMyBets = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const userId = await authService.getUserId();
       
       // Load both offers and legacy bets
@@ -42,7 +45,7 @@ export default function MyBetsScreen() {
       
       // Filter offers by current user
       const userOffers = userId 
-        ? allOffers.filter(o => o.creatorUserId === userId)
+        ? allOffers.filter(o => o.participantUserIds?.includes(userId))
         : [];
       
       setOffers(userOffers);
@@ -58,7 +61,7 @@ export default function MyBetsScreen() {
     <TouchableOpacity
       style={styles.betCard}
       onPress={() => {
-        if (item.status === 'MATCHED') {
+        if (['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(item.status)) {
           navigation.navigate('ActiveBet', { betId: item.offerId, offerId: item.offerId });
         } else {
           navigation.navigate('BetDetails', { betId: item.offerId, offerId: item.offerId });

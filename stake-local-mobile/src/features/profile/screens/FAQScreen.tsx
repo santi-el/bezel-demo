@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useRoute, RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../../../app/navigation/AppNavigator';
 import {
   View,
   Text,
@@ -15,19 +17,19 @@ interface FAQItem {
 const faqData: FAQItem[] = [
   {
     question: 'How do I create a bet?',
-    answer: 'Navigate to the Create Bet tab, fill in the bet details including title, amount, and odds, then submit.',
+    answer: 'Tap NEW+ in Near You, enter your offer, amount and odds, then submit.',
   },
   {
     question: 'What is a good-faith deposit?',
-    answer: 'A good-faith deposit is required to match a bet. It ensures both parties are committed and is held in escrow until the bet is resolved.',
+    answer: 'Your stake funds the wager. A separate good-faith deposit is reserved for each participant and returned when the wager is resolved. Commission is charged separately and is non-refundable. Cancellation or rejection releases the applicable stake and deposit; disputed funds stay held until resolution. This demo uses local simulated balances, not real money.',
   },
   {
     question: 'How are bets resolved?',
-    answer: 'Both parties must confirm the outcome. If there\'s a dispute, our support team will review and make a final decision.',
+    answer: 'Both participants confirm the outcome. In this local demo, conflicting results hold funds until a participant uses the demo dispute-resolution control. Support messages are saved locally and are not sent.',
   },
   {
     question: 'How do I withdraw my winnings?',
-    answer: 'Go to the Payments section and select Withdraw. Funds are typically processed within 1-3 business days.',
+    answer: 'Wallet withdrawals adjust your local demo balance only. No real money is transferred.',
   },
   {
     question: 'What happens if someone doesn\'t pay?',
@@ -36,7 +38,9 @@ const faqData: FAQItem[] = [
 ];
 
 export default function FAQScreen() {
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const route = useRoute<RouteProp<RootStackParamList, 'FAQ'>>();
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(route.params?.topic === 'deposit' ? 1 : null);
+  React.useEffect(() => { if (route.params?.topic === 'deposit') setExpandedIndex(1); }, [route.params]);
 
   const toggleExpanded = (index: number) => {
     setExpandedIndex(expandedIndex === index ? null : index);

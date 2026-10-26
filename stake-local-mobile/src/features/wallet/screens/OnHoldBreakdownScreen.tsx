@@ -36,13 +36,10 @@ export default function OnHoldBreakdownScreen() {
       const userId = await authService.getUserId();
       if (!userId) return;
 
-      const allOffers = await apiClient.getOffers();
-      const userOffers = allOffers.filter(
-        o => o.creatorUserId === userId && (o.status === 'OPEN' || o.status === 'MATCHED' || o.status === 'MATCHED_PENDING_ACCEPT')
-      );
+      const userOffers = await apiClient.getReservationOffers();
 
       const open = userOffers.filter(o => o.status === 'OPEN');
-      const active = userOffers.filter(o => o.status === 'MATCHED' || o.status === 'MATCHED_PENDING_ACCEPT');
+      const active = userOffers.filter(o => o.status === 'MATCHED' || o.status === 'MATCHED_PENDING_ACCEPT' || o.status === 'DISPUTED');
 
       setOpenOffers(open);
       setActiveOffers(active);
@@ -66,7 +63,7 @@ export default function OnHoldBreakdownScreen() {
     <TouchableOpacity
       style={styles.offerItem}
       onPress={() => {
-        if (item.status === 'MATCHED' || item.status === 'MATCHED_PENDING_ACCEPT') {
+        if (['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(item.status)) {
           navigation.navigate('ActiveBet', { betId: item.offerId, offerId: item.offerId });
         } else {
           navigation.navigate('BetDetails', { betId: item.offerId, offerId: item.offerId });
@@ -75,10 +72,10 @@ export default function OnHoldBreakdownScreen() {
     >
       <View style={styles.offerHeader}>
         <Text style={styles.offerTitle}>{item.postTitle}</Text>
-        <Text style={styles.offerAmount}>${item.totalHold.toFixed(2)}</Text>
+        <Text style={styles.offerAmount}>${(item.viewerHold ?? item.totalHold).toFixed(2)}</Text>
       </View>
       <Text style={styles.offerDetails}>
-        Stake: ${item.stakeCreator.toFixed(2)} • GFD: ${item.goodFaithDeposit.toFixed(2)}
+        Stake: ${(item.viewerStake ?? item.stakeCreator).toFixed(2)} • GFD: ${(item.viewerDeposit ?? item.goodFaithDeposit).toFixed(2)}
       </Text>
       <Text style={styles.offerStatus}>{item.status}</Text>
     </TouchableOpacity>
@@ -140,7 +137,7 @@ export default function OnHoldBreakdownScreen() {
             return (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>{section.title}</Text>
-                {section.data.map((offer: Offer) => (
+                {(section.data as Offer[]).map((offer: Offer) => (
                   <View key={offer.offerId}>
                     {renderOfferItem({ item: offer })}
                   </View>
@@ -151,7 +148,7 @@ export default function OnHoldBreakdownScreen() {
             return (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>{section.title}</Text>
-                {section.data.map((tx: Transaction) => (
+                {(section.data as Transaction[]).map((tx: Transaction) => (
                   <View key={tx.id}>
                     {renderTransaction({ item: tx })}
                   </View>

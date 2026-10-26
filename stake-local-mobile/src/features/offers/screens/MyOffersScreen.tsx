@@ -1,3 +1,4 @@
+import { amountPrompt } from '../../../components/AmountPrompt';
 import React, { useState } from 'react';
 import {
   View,
@@ -42,6 +43,9 @@ export default function MyOffersScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const refresh = async () => { setRefreshing(true); try { await loadMyOffers(true); } finally { setRefreshing(false); } };
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
   const [showOddsModal, setShowOddsModal] = useState(false);
@@ -64,9 +68,9 @@ export default function MyOffersScreen() {
     }, [])
   );
 
-  const loadMyOffers = async () => {
+  const loadMyOffers = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const userId = await authService.getUserId();
       setCurrentUserId(userId);
       
@@ -74,7 +78,7 @@ export default function MyOffersScreen() {
 
       const allOffers = await apiClient.getOffers();
       const userOffers = allOffers.filter(
-        o => o.creatorUserId === userId || o.matcherUserId === userId
+        o => o.participantUserIds?.includes(userId)
       );
       
       // Sort: OPEN at top (highlighted in yellow), then MATCHED_PENDING_ACCEPT (urgent), then MATCHED (green), then MATCHED&RAISED (red), then others
@@ -92,9 +96,10 @@ export default function MyOffersScreen() {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
       
+      setLoadError(null);
       setOffers(sortedOffers);
     } catch (error) {
-      console.error('Error loading my offers:', error);
+      setLoadError('Unable to load offers. Tap to retry.');
     } finally {
       setLoading(false);
     }
@@ -156,7 +161,7 @@ export default function MyOffersScreen() {
 
     try {
       const stakeBValue = selectedOdds.ratio === 'CUSTOM'
-        ? parseFloat(customStakeB) || editingOffer.stakeCreator
+        ? Number(customStakeB) || editingOffer.stakeCreator
         : selectedOdds.calculateStakeB(editingOffer.stakeCreator);
 
       await apiClient.updateOfferOdds(editingOffer.offerId, selectedOdds.ratio, stakeBValue);
@@ -225,11 +230,12 @@ export default function MyOffersScreen() {
       <TouchableOpacity
         style={[
           styles.offerCard,
+          {padding: 18, marginBottom: 16},
           isOpen && styles.openOfferCard,
           isActive && styles.activeOfferCard,
         ]}
         onPress={() => {
-          if (item.status === 'MATCHED') {
+          if (['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(item.status)) {
             navigation.navigate('ActiveBet', { betId: item.offerId, offerId: item.offerId });
           } else {
             navigation.navigate('BetDetails', { betId: item.offerId, offerId: item.offerId });
@@ -273,7 +279,7 @@ export default function MyOffersScreen() {
         </View>
 
         {/* Open Offer Actions */}
-        {isOpen && (
+        {isOpen && item.creatorUserId === currentUserId && (
           <View style={styles.offerActions}>
             <TouchableOpacity
               style={styles.actionButton}
@@ -290,7 +296,7 @@ export default function MyOffersScreen() {
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => {
-                Alert.prompt(
+                amountPrompt(
                   'Raise Amount',
                   `Current stake: $${item.stakeCreator.toFixed(2)}\nEnter new total stake amount:`,
                   [
@@ -299,7 +305,7 @@ export default function MyOffersScreen() {
                       text: 'Raise',
                       onPress: async (newAmount?: string) => {
                         if (!newAmount) return;
-                        const amount = parseFloat(newAmount);
+                        const amount = Number(newAmount);
                         if (isNaN(amount) || amount <= item.stakeCreator) {
                           Alert.alert('Error', 'New amount must be greater than current stake');
                           return;
@@ -347,32 +353,7 @@ export default function MyOffersScreen() {
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => {
-                Alert.prompt(
-                  'Raise Amount',
-                  `Current stake: $${item.stakeCreator.toFixed(2)}\nEnter new total stake amount:`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Raise',
-                      onPress: async (newAmount?: string) => {
-                        if (!newAmount) return;
-                        const amount = parseFloat(newAmount);
-                        if (isNaN(amount) || amount <= item.stakeCreator) {
-                          Alert.alert('Error', 'New amount must be greater than current stake');
-                          return;
-                        }
-                        try {
-                          await apiClient.raiseOfferAmount(item.offerId, amount);
-                          await loadMyOffers();
-                          Alert.alert('Success', 'Offer amount raised successfully');
-                        } catch (error: any) {
-                          Alert.alert('Error', error.message || 'Failed to raise amount');
-                        }
-                      },
-                    },
-                  ],
-                  'plain-text'
-                );
+                navigation.navigate('MatchAndRaise', {offerId:item.offerId});
               }}
             >
               <Text style={styles.actionButtonText}>Raise Amount</Text>
@@ -386,7 +367,7 @@ export default function MyOffersScreen() {
           </View>
         )}
 
-        {(item.status === 'MATCHED_PENDING_ACCEPT' || (item.status === 'MATCHED' && item.parentOfferId)) && (
+        {item.status === 'MATCHED_PENDING_ACCEPT' && item.creatorUserId === currentUserId && (
           <View style={styles.pendingActions}>
             {item.status === 'MATCHED_PENDING_ACCEPT' && (
               <>
@@ -429,17 +410,7 @@ export default function MyOffersScreen() {
                 )}
               </>
             )}
-        {item.status === 'MATCHED' && item.parentOfferId && (
-          <TouchableOpacity
-            style={styles.acceptButton}
-            onPress={() => {
-              // Handle accept for matched & raised
-              Alert.alert('Accept Offer', 'This would accept the matched & raised offer');
-            }}
-          >
-            <Text style={styles.acceptButtonText}>Accept</Text>
-          </TouchableOpacity>
-            )}
+
           </View>
         )}
       </TouchableOpacity>
@@ -457,10 +428,13 @@ export default function MyOffersScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        refreshing={refreshing}
+        onRefresh={refresh}
+        ListHeaderComponent={<View style={{marginBottom: 20}}><Text style={{color: '#FFFFFF', fontSize: 24, fontWeight: '700'}}>Your offers</Text><Text style={{color: '#AAAAAA', marginTop: 6}}>Manage your stakes and follow each offer</Text>{loadError && <TouchableOpacity onPress={refresh}><Text style={{color: '#FFD700', paddingVertical: 12}}>{loadError}</Text></TouchableOpacity>}</View>}
         data={offers}
         renderItem={renderOfferItem}
         keyExtractor={(item) => item.offerId}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, {paddingBottom: 40}]}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No offers yet</Text>
@@ -484,7 +458,7 @@ export default function MyOffersScreen() {
                 <View style={styles.oddsList}>
                   {ODDS_OPTIONS.map((odds) => {
                     const stakeBForOption = odds.ratio === 'CUSTOM'
-                      ? parseFloat(customStakeB) || editingOffer.stakeCreator
+                      ? Number(customStakeB) || editingOffer.stakeCreator
                       : odds.calculateStakeB(editingOffer.stakeCreator);
                     const displayText = odds.ratio === 'CUSTOM'
                       ? 'CUSTOM'

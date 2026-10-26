@@ -1,3 +1,4 @@
+import { useScreenRefresh } from '../../../services/demo/useScreenRefresh';
 import React, { useState } from 'react';
 import {
   View,
@@ -6,6 +7,8 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
+  ViewStyle,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,6 +21,9 @@ export default function NotificationsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const refresh = async () => { setRefreshing(true); try { await loadNotifications(true); } finally { setRefreshing(false); } };
 
   useFocusEffect(
     React.useCallback(() => {
@@ -25,36 +31,42 @@ export default function NotificationsScreen() {
     }, [])
   );
 
-  const loadNotifications = async () => {
+  useScreenRefresh(silent => loadNotifications(silent));
+
+  const loadNotifications = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const notifs = await apiClient.getNotifications();
+      setLoadError(null);
       setNotifications(notifs);
     } catch (error) {
-      console.error('Error loading notifications:', error);
+      setLoadError('Unable to load updates. Tap to retry.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleNotificationPress = async (notification: AppNotification) => {
-    // Mark as read
-    if (!notification.read) {
+    try {
       await apiClient.markNotificationRead(notification.id);
-      setNotifications(prev =>
-        prev.map(n => (n.id === notification.id ? { ...n, read: true } : n))
-      );
-    }
-
-    // Navigate based on type
-    if (notification.offerId) {
-      const matchedTypes = ['offer_matched', 'offer_accepted', 'result_confirmed', 'opponent_result'];
-      if (matchedTypes.includes(notification.type)) {
-        navigation.navigate('ActiveBet', { betId: notification.offerId, offerId: notification.offerId });
-      } else {
-        navigation.navigate('BetDetails', { betId: notification.offerId, offerId: notification.offerId });
+      setNotifications(prev=>prev.map(n=>n.id===notification.id?{...n,read:true}:n));
+      if(notification.offerId) {
+        const offer=await apiClient.getOfferById(notification.offerId);
+        if(!offer) {Alert.alert('Offer unavailable','This offer is no longer available.');return;}
+        navigation.navigate(['MATCHED','MATCHED_PENDING_ACCEPT','DISPUTED','SETTLED'].includes(offer.status)?'ActiveBet':'BetDetails',{betId:offer.offerId,offerId:offer.offerId});
       }
-    }
+    } catch(error) {Alert.alert('Error',error instanceof Error?error.message:'Unable to open notification');}
+
+  };
+
+  const handleMatchNotice = async (item: AppNotification) => {
+    try {
+      const offerId = await apiClient.getNotificationMatch(item.id);
+      await apiClient.markNotificationRead(item.id);
+      navigation.navigate('MatchOffer', {offerId});
+    } catch (error) {
+      Alert.alert('Offer unavailable', error instanceof Error ? error.message : 'Unable to open offer');
+    } finally { await loadNotifications(true); }
   };
 
   const formatTime = (dateString: string) => {
@@ -66,7 +78,7 @@ export default function NotificationsScreen() {
     const diffDays = Math.floor(diffMs / 86400000);
 
     if (diffMins < 60) {
-      return `${diffMins}m ago`;
+      return diffMins < 1 ? 'Just now' : `${diffMins}m ago`;
     } else if (diffHours < 24) {
       return `${diffHours}h ago`;
     } else {
@@ -75,7 +87,7 @@ export default function NotificationsScreen() {
   };
 
   const getNotificationStyle = (notification: AppNotification) => {
-    const baseStyle = [styles.notificationItem];
+    const baseStyle: ViewStyle[] = [styles.notificationItem];
     
     // Color coding based on notification color
     switch (notification.color) {
@@ -102,7 +114,7 @@ export default function NotificationsScreen() {
     
     return (
       <TouchableOpacity
-        style={getNotificationStyle(item)}
+        style={[getNotificationStyle(item), {borderRadius: 12, marginBottom: 12, padding: 18, opacity: item.read ? 0.8 : 1}]}
         onPress={() => handleNotificationPress(item)}
       >
         <View style={styles.notificationContent}>
@@ -113,8 +125,11 @@ export default function NotificationsScreen() {
             {item.title}
           </Text>
           <Text style={styles.notificationMessage}>{item.message}</Text>
-          <Text style={styles.notificationTime}>{formatTime(item.createdAt)}</Text>
+          <Text style={styles.notificationTime}>{formatTime(item.createdAt)} · {new Date(item.createdAt).toLocaleString()}</Text>
         </View>
+        {item.type === 'offer_raised' && (item.canMatch ? (
+          <TouchableOpacity style={styles.verifyButton} onPress={() => handleMatchNotice(item)}><Text style={styles.verifyButtonText}>Match</Text></TouchableOpacity>
+        ) : <Text style={{color: '#AAAAAA', marginLeft: 8, maxWidth: 100}}>{item.offerStatus?.replaceAll('_', ' ')} · View details</Text>)}
         {isOpponentResult && item.offerId && (
           <TouchableOpacity
             style={styles.verifyButton}
@@ -141,10 +156,13 @@ export default function NotificationsScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        refreshing={refreshing}
+        onRefresh={refresh}
+        ListHeaderComponent={<View style={{marginBottom: 20}}><Text style={{color: '#FFFFFF', fontSize: 24, fontWeight: '700'}}>Your activity</Text><Text style={{color: '#AAAAAA', marginTop: 6}}>Matches, results and updates in one place</Text>{loadError && <TouchableOpacity onPress={refresh}><Text style={{color: '#FFD700', paddingVertical: 12}}>{loadError}</Text></TouchableOpacity>}</View>}
         data={notifications}
         renderItem={renderNotification}
         keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, {paddingBottom: 40}]}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No notifications yet</Text>
